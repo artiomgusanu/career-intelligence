@@ -1,3 +1,4 @@
+
 [build-system]
 requires = ["setuptools>=75"]
 build-backend = "setuptools.build_meta"
@@ -7,7 +8,9 @@ name = "career-intelligence"
 version = "0.1.0"
 description = "An intelligence platform built with Python, FastAPI, PostgreSQL, and AI."
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi[standard]",
+]
 
 [project.optional-dependencies]
 dev = [
