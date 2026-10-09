@@ -10,6 +10,9 @@ description = "An intelligence platform built with Python, FastAPI, PostgreSQL, 
 requires-python = ">=3.12"
 dependencies = [
     "fastapi[standard]",
+    "sqlalchemy>=2.0,<3.0",
+    "psycopg[binary]>=3.2,<4.0",
+    "alembic>=1.14,<2.0",
 ]
 
 [project.optional-dependencies]

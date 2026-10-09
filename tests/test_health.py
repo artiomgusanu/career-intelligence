@@ -1,7 +1,7 @@
 
 from fastapi.testclient import TestClient
 
-from src.main import app
+from career_intelligence.main import app
 
 client = TestClient(app)
 
