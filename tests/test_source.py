@@ -69,3 +69,30 @@ def test_get_source_returns_404_when_not_found(client: TestClient) -> None:
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Source not found."}
+
+
+def test_delete_source_returns_204(client: TestClient) -> None:
+    response = client.delete("/sources/1")
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+
+def test_delete_source_returns_404_when_not_found(
+    client: TestClient,
+) -> None:
+    response = client.delete("/sources/999999")
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Source not found."}
+
+
+def test_deleted_source_cannot_be_retrieved(client: TestClient) -> None:
+    delete_response = client.delete("/sources/1")
+
+    assert delete_response.status_code == 204
+
+    get_response = client.get("/sources/1")
+
+    assert get_response.status_code == 404
+    assert get_response.json() == {"detail": "Source not found."}

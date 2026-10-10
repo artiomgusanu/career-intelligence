@@ -35,3 +35,14 @@ def get_source_by_id(
 def list_sources(session: Session) -> list[Source]:
     statement = select(Source).order_by(Source.id)
     return list(session.scalars(statement).all())
+
+
+def delete_source(session: Session, source_id: int) -> bool:
+    source = session.get(Source, source_id)
+
+    if source is None:
+        return False
+
+    session.delete(source)
+    session.commit()
+    return True

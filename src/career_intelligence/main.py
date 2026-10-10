@@ -7,6 +7,7 @@ from career_intelligence.db.session import get_db
 from career_intelligence.schemas import SourceCreate, SourceResponse
 from career_intelligence.db.repositories import (
     create_source,
+    delete_source,
     get_source_by_id,
     list_sources,
 )
@@ -70,3 +71,21 @@ def get_source(
         )
 
     return SourceResponse.model_validate(source)
+
+
+@app.delete(
+    "/sources/{source_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_source_endpoint(
+    source_id: int,
+    db: Session = Depends(get_db),
+) -> None:
+    deleted = delete_source(db, source_id)
+
+    if not deleted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source not found.",
+        )
+
