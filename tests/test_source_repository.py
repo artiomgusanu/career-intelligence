@@ -1,14 +1,13 @@
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from career_intelligence.db.session import Base
-from career_intelligence.models import Source
 from career_intelligence.db.repositories import (
     create_source,
     get_source_by_id,
     list_sources,
 )
+from career_intelligence.db.session import Base
 
 
 def test_source_repository_persists_data() -> None:

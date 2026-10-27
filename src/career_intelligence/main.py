@@ -3,14 +3,15 @@ from fastapi import Depends, FastAPI, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from career_intelligence.db.session import get_db
-from career_intelligence.schemas import SourceCreate, SourceResponse
 from career_intelligence.db.repositories import (
     create_source,
     delete_source,
     get_source_by_id,
     list_sources,
+    update_source,
 )
+from career_intelligence.db.session import get_db
+from career_intelligence.schemas import SourceCreate, SourceResponse, SourceUpdate
 
 app = FastAPI(
     title="Career Intelligence",
@@ -71,6 +72,32 @@ def get_source(
         )
 
     return SourceResponse.model_validate(source)
+
+
+
+@app.patch("/sources/{source_id}", response_model=SourceResponse)
+def update_source_endpoint(
+    source_id: int,
+    payload: SourceUpdate,
+    db: Session = Depends(get_db),
+) -> SourceResponse:
+    try:
+        source = update_source(db, source_id, payload)
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A source with this name already exists.",
+        ) from exc
+
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Source not found.",
+        )
+
+    return SourceResponse.model_validate(source)
+
 
 
 @app.delete(
