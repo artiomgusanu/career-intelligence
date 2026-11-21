@@ -11,7 +11,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from career_intelligence.db.session import Base
 
@@ -26,6 +26,13 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+
+    # passive_deletes="all": the ORM never loads or nullifies children when a
+    # source is deleted, so the database's ON DELETE RESTRICT is the sole authority.
+    job_postings: Mapped[list["JobPosting"]] = relationship(
+        back_populates="source",
+        passive_deletes="all",
     )
 
 
@@ -75,4 +82,6 @@ class JobPosting(Base):
         server_default=func.now(),
         nullable=False,
     )
+
+    source: Mapped[Source] = relationship(back_populates="job_postings")
 

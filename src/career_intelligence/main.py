@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from career_intelligence.db.repositories import (
+    SourceInUseError,
     create_source,
     delete_source,
     get_source_by_id,
@@ -108,7 +109,13 @@ def delete_source_endpoint(
     source_id: int,
     db: Session = Depends(get_db),
 ) -> None:
-    deleted = delete_source(db, source_id)
+    try:
+        deleted = delete_source(db, source_id)
+    except SourceInUseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Source has associated job postings and cannot be deleted.",
+        ) from exc
 
     if not deleted:
         raise HTTPException(

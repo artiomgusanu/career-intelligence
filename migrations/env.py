@@ -62,6 +62,21 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations in online mode."""
 
+    # A caller (e.g. the integration test suite) may supply its own connection
+    # via Config.attributes; DATABASE_URL is then ignored entirely.
+    connection = config.attributes.get("connection")
+
+    if connection is not None:
+        context.configure(
+            connection=connection,
+            target_metadata=Base.metadata,
+        )
+
+        with context.begin_transaction():
+            context.run_migrations()
+
+        return
+
     database_url = os.environ.get("DATABASE_URL")
 
     if not database_url:
