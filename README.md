@@ -65,7 +65,10 @@ SourceAdapter.fetch_raw_postings()  ->  SourceAdapter.map_posting()  ->  JobPost
 
 - `ingestion/contracts.py`: `SourceAdapter` protocol. Adapters never touch the database.
 - `ingestion/http.py`: `HttpClient` with explicit timeouts, limited retries for transient
-  failures, no redirects, HTTPS required, and credential-free errors and logs.
+  failures (honouring `Retry-After` on 429/503 up to `HTTP_MAX_RETRY_AFTER_SECONDS`), an
+  optional per-source minimum interval between requests (`min_interval_seconds`, serialized
+  across threads sharing a client), no redirects, HTTPS required, no credentials ever sent
+  over plain HTTP, and credential-free errors and logs.
 - `ingestion/pagination.py`: page-number pagination that refuses to truncate silently.
 - `ingestion/service.py`: collection and validation, database-free.
 - `ingestion/persistence.py`: registers the source and upserts postings (no commit).
@@ -84,7 +87,8 @@ python -m career_intelligence.ingest --persist --allow-demo-data local-file path
 ```
 
 Logging is controlled by `LOG_LEVEL`; HTTP clients by `HTTP_TIMEOUT_SECONDS`,
-`HTTP_MAX_RETRIES` and `HTTP_BACKOFF_SECONDS` (validated at CLI start-up).
+`HTTP_MAX_RETRIES`, `HTTP_BACKOFF_SECONDS` and `HTTP_MAX_RETRY_AFTER_SECONDS` (validated at
+CLI start-up).
 
 ## Development Status
 

@@ -1,9 +1,32 @@
+import os
 import socket
 from collections.abc import Iterator
 
 import pytest
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+# Duplicate of the process's real stderr, taken before pytest captures output.
+# Deadlock watchdogs write their traceback dump here, so it stays visible even
+# though pytest captures fd 2 while tests run.
+_REAL_STDERR_FD = pytest.StashKey[int]()
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    config.stash[_REAL_STDERR_FD] = os.dup(2)
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    fd = config.stash.get(_REAL_STDERR_FD, None)
+    if fd is not None:
+        os.close(fd)
+        del config.stash[_REAL_STDERR_FD]
+
+
+@pytest.fixture
+def real_stderr_fd(pytestconfig: pytest.Config) -> int:
+    """File descriptor of the real stderr, unaffected by pytest's output capture."""
+    return pytestconfig.stash[_REAL_STDERR_FD]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:

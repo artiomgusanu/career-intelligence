@@ -47,11 +47,15 @@ _HEADER_PATTERN = re.compile(
     + r")(['\"]?\s*[:=]\s*['\"]?)(?:(bearer|basic|token)\s+)?([^\s,;'\"]+)"
 )
 
+# Password in URL userinfo: scheme://user:PASSWORD@host
+_USERINFO_PATTERN = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^\s/:@]*:)[^\s/@]+@")
+
 _THIRD_PARTY_URL_LOGGERS = ("httpx",)
 
 
 def redact_text(text: str) -> str:
-    """Mask credential-looking query parameters and auth headers in free text."""
+    """Mask credential-looking query parameters, URL passwords and auth headers."""
+    text = _USERINFO_PATTERN.sub(lambda m: f"{m.group(1)}{REDACTED}@", text)
     text = _PARAM_PATTERN.sub(lambda m: f"{m.group(1)}={REDACTED}", text)
     return _HEADER_PATTERN.sub(
         lambda m: f"{m.group(1)}{m.group(2)}{m.group(3) + ' ' if m.group(3) else ''}{REDACTED}",

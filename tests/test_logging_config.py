@@ -53,6 +53,27 @@ def test_redact_text_masks_credentials(text: str) -> None:
     assert SECRET not in redact_text(text)
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        f'HTTP Request: GET https://user:{SECRET}@api.example.com/x "HTTP/1.1 200 OK"',
+        f"connect to postgresql+psycopg://app:{SECRET}@127.0.0.1:5432/db failed",
+        f"http://:{SECRET}@host/",
+    ],
+)
+def test_redact_text_masks_url_userinfo_passwords(text: str) -> None:
+    redacted = redact_text(text)
+
+    assert SECRET not in redacted
+    assert f":{REDACTED}@" in redacted
+
+
+def test_redact_text_keeps_urls_without_passwords() -> None:
+    text = "GET https://user@api.example.com/x and mailto:someone@example.com"
+
+    assert redact_text(text) == text
+
+
 def test_redact_text_does_not_touch_lookalike_names() -> None:
     text = "monkey=banana keyboard=qwerty page=1"
 

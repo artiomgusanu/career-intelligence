@@ -60,3 +60,29 @@ def test_configuration_errors_never_echo_values() -> None:
         load_http_settings({"HTTP_TIMEOUT_SECONDS": "s3cr3t-looking-value"})
 
     assert "s3cr3t-looking-value" not in str(exc_info.value)
+
+
+def test_max_retry_after_default_and_environment() -> None:
+    assert load_http_settings({}).max_retry_after_seconds == 60.0
+    assert (
+        load_http_settings({"HTTP_MAX_RETRY_AFTER_SECONDS": "120"}).max_retry_after_seconds
+        == 120.0
+    )
+    assert load_http_settings({"HTTP_MAX_RETRY_AFTER_SECONDS": "0"}).max_retry_after_seconds == 0
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("abc", "must be a number"),
+        ("-1", "between 0 and 3600"),
+        ("3601", "between 0 and 3600"),
+        ("nan", "between 0 and 3600"),
+        ("inf", "between 0 and 3600"),
+    ],
+)
+def test_max_retry_after_rejects_invalid_values(value: str, message: str) -> None:
+    with pytest.raises(ConfigurationError, match=message) as exc_info:
+        load_http_settings({"HTTP_MAX_RETRY_AFTER_SECONDS": value})
+
+    assert value not in str(exc_info.value)

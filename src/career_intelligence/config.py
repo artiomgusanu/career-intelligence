@@ -9,6 +9,8 @@ Environment variables (all optional):
 - ``HTTP_TIMEOUT_SECONDS``: per-request timeout (default 10).
 - ``HTTP_MAX_RETRIES``: retries for transient failures, 0-5 (default 2).
 - ``HTTP_BACKOFF_SECONDS``: base delay for exponential backoff (default 0.5).
+- ``HTTP_MAX_RETRY_AFTER_SECONDS``: longest ``Retry-After`` honoured, 0-3600
+  (default 60). A longer server-requested wait fails the request instead.
 
 Source credentials (e.g. ``ITJOBS_API_KEY``) are read with ``get_secret``.
 """
@@ -24,6 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
 MAX_HTTP_RETRIES = 5
+MAX_RETRY_AFTER_LIMIT_SECONDS = 3600.0
 
 
 class ConfigurationError(ValueError):
@@ -35,6 +38,7 @@ class HttpSettings:
     timeout_seconds: float = 10.0
     max_retries: int = 2
     backoff_seconds: float = 0.5
+    max_retry_after_seconds: float = 60.0
     user_agent: str = "career-intelligence/0.1"
 
 
@@ -59,7 +63,21 @@ def load_http_settings(env: Mapping[str, str] | None = None) -> HttpSettings:
     if not 0 <= retries <= MAX_HTTP_RETRIES:
         raise ConfigurationError(f"HTTP_MAX_RETRIES must be between 0 and {MAX_HTTP_RETRIES}.")
 
-    return HttpSettings(timeout_seconds=timeout, max_retries=retries, backoff_seconds=backoff)
+    retry_after_limit = _read_float(
+        env, "HTTP_MAX_RETRY_AFTER_SECONDS", defaults.max_retry_after_seconds
+    )
+    if not 0 <= retry_after_limit <= MAX_RETRY_AFTER_LIMIT_SECONDS:
+        raise ConfigurationError(
+            "HTTP_MAX_RETRY_AFTER_SECONDS must be between 0 and "
+            f"{MAX_RETRY_AFTER_LIMIT_SECONDS:.0f}."
+        )
+
+    return HttpSettings(
+        timeout_seconds=timeout,
+        max_retries=retries,
+        backoff_seconds=backoff,
+        max_retry_after_seconds=retry_after_limit,
+    )
 
 
 def load_log_level(env: Mapping[str, str] | None = None) -> str:
