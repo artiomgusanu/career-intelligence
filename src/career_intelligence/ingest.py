@@ -1,0 +1,160 @@
+"""Command-line entry point for running an ingestion.
+
+Usage::
+
+    python -m career_intelligence.ingest local-file PATH                    # dry run
+    python -m career_intelligence.ingest --persist SOURCE ...               # write
+    python -m career_intelligence.ingest --persist --allow-demo-data local-file PATH
+
+Runs are dry runs by default: postings are fetched, mapped and validated, and
+the database layer (SQLAlchemy included) is never imported. Writing requires
+``--persist``. Demonstration sources (``source_type == "demo"``) additionally
+require ``--allow-demo-data``, so demo data cannot be persisted by accident.
+
+Exit codes: 0 success, 1 ingestion failure, 2 invalid arguments, refused
+demo persistence or invalid configuration.
+"""
+
+import argparse
+import logging
+import sys
+from collections.abc import Callable, Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from career_intelligence.config import (
+    ConfigurationError,
+    load_environment,
+    load_http_settings,
+    load_log_level,
+)
+from career_intelligence.ingestion.contracts import DEMO_SOURCE_TYPE, IngestionError, SourceAdapter
+from career_intelligence.ingestion.service import CollectionResult, collect_postings
+from career_intelligence.logging_config import configure_logging
+from career_intelligence.sources.local_file import LocalFileAdapter
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
+
+MAX_REJECTIONS_SHOWN = 20
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m career_intelligence.ingest",
+        description="Collect job postings from a source. Dry run unless --persist is given.",
+    )
+    parser.add_argument(
+        "--persist",
+        action="store_true",
+        help="Write postings to the database named by DATABASE_URL. Without this flag "
+        "nothing is written and the database is never contacted.",
+    )
+    parser.add_argument(
+        "--allow-demo-data",
+        action="store_true",
+        help="Required together with --persist to store data from a demonstration source.",
+    )
+    sources = parser.add_subparsers(dest="source", required=True, metavar="SOURCE")
+
+    local_file = sources.add_parser(
+        "local-file", help="Demonstration postings from a local JSON file."
+    )
+    local_file.add_argument("path", type=Path, help="Path to the JSON file.")
+
+    return parser
+
+
+def build_adapter(args: argparse.Namespace) -> SourceAdapter:
+    if args.source == "local-file":
+        return LocalFileAdapter(args.path)
+    raise AssertionError(f"unhandled source {args.source!r}")  # pragma: no cover
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    session_factory: "Callable[[], Session] | None" = None,
+) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.allow_demo_data and not args.persist:
+        parser.error("--allow-demo-data requires --persist")
+
+    try:
+        load_http_settings()  # fail fast; HTTP clients read the same settings
+    except ConfigurationError as exc:
+        print(f"error: invalid configuration: {exc}", file=sys.stderr)
+        return 2
+
+    adapter = build_adapter(args)
+    is_demo = adapter.metadata.source_type == DEMO_SOURCE_TYPE
+    if args.persist and is_demo and not args.allow_demo_data:
+        print(
+            f"error: {adapter.metadata.name!r} is a demonstration source; "
+            "refusing to persist without --allow-demo-data",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        collection = collect_postings(adapter)
+    except IngestionError as exc:
+        logger.error("ingestion_failed source=%r error=%s", args.source, exc)
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+    _print_collection(collection, persist=args.persist)
+    if not args.persist:
+        print("dry run: nothing was written (use --persist to store postings)")
+        return 0
+
+    # Imported only when persisting, so dry runs never load the database layer.
+    from career_intelligence.ingestion.persistence import persist_collection
+
+    if session_factory is None:
+        from career_intelligence.db.session import SessionLocal
+
+        session_factory = SessionLocal
+
+    with session_factory() as session:
+        print(f"persisting to database {_describe_target(session)}")
+        with session.begin():
+            result = persist_collection(session, collection)
+
+    print(
+        f"persisted source_id={result.source_id} source_created={result.source_created} "
+        f"inserted={result.upsert.inserted} updated={result.upsert.updated} "
+        f"duplicates_in_batch={result.upsert.duplicates_in_batch}"
+    )
+    return 0
+
+
+def _describe_target(session: "Session") -> str:
+    """host:port/database only: never credentials or query parameters."""
+    url = session.get_bind().engine.url
+    return f"{url.host}:{url.port}/{url.database}"
+
+
+def _print_collection(collection: CollectionResult, *, persist: bool) -> None:
+    mode = "persist" if persist else "dry-run"
+    print(
+        f"source={collection.source.name!r} mode={mode} fetched={collection.fetched} "
+        f"valid={len(collection.postings)} rejected={len(collection.rejected)}"
+    )
+    for item in collection.rejected[:MAX_REJECTIONS_SHOWN]:
+        print(f"  rejected position={item.position} external_id={item.external_id!r}: {item.reason}")
+    if len(collection.rejected) > MAX_REJECTIONS_SHOWN:
+        print(f"  ... {len(collection.rejected) - MAX_REJECTIONS_SHOWN} more rejected")
+
+
+def run() -> None:
+    load_environment()
+    configure_logging(load_log_level())
+    sys.exit(main())
+
+
+if __name__ == "__main__":
+    run()

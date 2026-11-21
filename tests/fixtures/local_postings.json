@@ -1,0 +1,55 @@
+{
+  "postings": [
+    {
+      "id": "be-001",
+      "title": "Backend Engineer (Python)",
+      "company": {"name": "Example Tech", "slug": "example-tech"},
+      "url": "https://jobs.example.com/be-001",
+      "employment_type": "Full-time",
+      "locations": ["Lisboa", "Porto"],
+      "description": "<p>Build APIs with FastAPI.</p>",
+      "salary": {"min": 30000, "max": 45000, "currency": "eur", "period": "year"},
+      "published_at": "2026-11-20T09:00:00+00:00"
+    },
+    {
+      "id": 1002,
+      "title": "Data Engineer",
+      "company": {"name": "Sample Data"},
+      "url": "https://jobs.example.com/1002"
+    },
+    {
+      "id": "fe-003",
+      "title": "Frontend Engineer",
+      "company": {"name": "Example Tech", "slug": "example-tech"},
+      "url": "https://jobs.example.com/fe-003",
+      "locations": ["  ", "Braga"],
+      "description": "   "
+    },
+    {
+      "id": "be-001",
+      "title": "Backend Engineer (Python) - updated",
+      "company": {"name": "Example Tech", "slug": "example-tech"},
+      "url": "https://jobs.example.com/be-001"
+    },
+    {
+      "id": "no-company",
+      "title": "Orphan posting",
+      "url": "https://jobs.example.com/no-company"
+    },
+    {
+      "id": "naive-date",
+      "title": "QA Engineer",
+      "company": {"name": "Example Tech"},
+      "url": "https://jobs.example.com/naive-date",
+      "published_at": "2026-11-20T09:00:00"
+    },
+    {
+      "id": "bad-salary",
+      "title": "DevOps Engineer",
+      "company": {"name": "Example Tech"},
+      "url": "https://jobs.example.com/bad-salary",
+      "salary": {"min": 60000, "max": 40000}
+    },
+    "not-an-object"
+  ]
+}
