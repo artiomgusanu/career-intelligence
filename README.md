@@ -86,6 +86,43 @@ python -m career_intelligence.ingest local-file path/to/postings.json           
 python -m career_intelligence.ingest --persist --allow-demo-data local-file path/to/postings.json
 ```
 
+With `--persist`, the database is contacted only if the collection holds at least one valid
+posting; rejected postings are never written. Exit codes: `0` success (including "nothing to
+persist" for a source that returned no postings), `1` ingestion failure, or persistence
+refused because every fetched posting was rejected, `2` invalid arguments, refused demo
+persistence or invalid configuration.
+
+Rejections are summarized: up to 20 individual rejections, then the 10 most frequent reasons
+with their counts. Every individual rejection is logged at DEBUG (`LOG_LEVEL=DEBUG`).
+
+### ITJobs.pt
+
+```bash
+python -m career_intelligence.ingest itjobs              # dry run
+python -m career_intelligence.ingest --persist itjobs    # see the limitations below
+```
+
+- **API key**: read from `ITJOBS_API_KEY` (environment or `.env`), never from the command
+  line. If it is unset or blank, the command exits with code 2 before any request. The key
+  is sent only as the `api_key` query parameter and is redacted from logs and errors. Real
+  API use remains subject to explicit authorization.
+- **Requests**: `GET https://api.itjobs.pt/job/list.json`, at least 1 second apart, pages
+  of 50 postings, at most 100 pages (5,000 postings). The usual `HTTP_*` settings apply.
+- **Pagination is strict**: an API error, a changing total, an incomplete or repeated page,
+  a duplicated posting id or too many pages aborts the run with exit code 1, and nothing
+  is written.
+
+Current limitations:
+
+- **No posting can be stored yet.** The current adapter does not obtain a public URL for a
+  posting, and none is derived from other fields, while `job_url` is required. Every current
+  ITJobs posting is therefore rejected (`validation: job_url: Field required`), and
+  `--persist` exits with code 1 without contacting the database whenever the listing is not
+  empty.
+- **Response format not verified.** The record and envelope shapes come from the public API
+  documentation and have not yet been checked against real responses. Dates, salary and
+  locations are deliberately not read (see `sources/itjobs.py`).
+
 Logging is controlled by `LOG_LEVEL`; HTTP clients by `HTTP_TIMEOUT_SECONDS`,
 `HTTP_MAX_RETRIES`, `HTTP_BACKOFF_SECONDS` and `HTTP_MAX_RETRY_AFTER_SECONDS` (validated at
 CLI start-up).

@@ -545,3 +545,24 @@ def test_persist_with_an_empty_listing_exits_0_without_touching_the_database(
     assert "mode=persist fetched=0 valid=0 rejected=0" in out
     assert "nothing to persist: the source returned no postings" in out
     assert [client.close_calls for client in factory.clients] == [1]
+
+
+def test_persist_with_a_failure_on_page_2_exits_1_without_touching_the_database(
+    capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    api = FakeListApi(
+        [record(n) for n in range(1, DEFAULT_PAGE_SIZE + 3)],  # 2 pages
+        tamper=lambda page, body: server_error(page, body) if page == 2 else body,
+    )
+    factory = ClientFactory(api)
+
+    exit_code = run(factory, "--persist")  # run() passes forbidden_session_factory
+
+    out, err = assert_key_not_exposed(capsys, caplog)
+    assert exit_code == 1
+    assert api.pages == [1, 2]
+    assert "HTTP 500" in err
+    assert "fetched=" not in out
+    assert "persisting to" not in out
+    assert [client.close_calls for client in factory.clients] == [1]
