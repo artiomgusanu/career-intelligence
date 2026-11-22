@@ -25,6 +25,10 @@ whose postings were all rejected fails (exit 1) without touching the database,
 so no source is registered without postings. Dry runs report both cases and
 exit 0.
 
+Rejections are summarized: at most ``MAX_REJECTIONS_SHOWN`` individual
+rejections, then the ``MAX_REASONS_SHOWN`` most frequent reasons with their
+counts. Every individual rejection is logged at DEBUG (``LOG_LEVEL=DEBUG``).
+
 Exit codes: 0 success (including "nothing to persist"), 1 ingestion failure
 or persistence refused because every posting was rejected, 2 invalid
 arguments, refused demo persistence or invalid configuration.
@@ -47,7 +51,12 @@ from career_intelligence.config import (
 )
 from career_intelligence.ingestion.contracts import DEMO_SOURCE_TYPE, IngestionError, SourceAdapter
 from career_intelligence.ingestion.http import HttpClient
-from career_intelligence.ingestion.service import CollectionResult, collect_postings
+from career_intelligence.ingestion.service import (
+    MAX_REASONS_SHOWN,
+    CollectionResult,
+    collect_postings,
+    count_rejection_reasons,
+)
 from career_intelligence.logging_config import configure_logging
 from career_intelligence.sources.itjobs import (
     ITJOBS_BASE_URL,
@@ -227,6 +236,18 @@ def _print_collection(collection: CollectionResult, *, persist: bool) -> None:
         )
     if len(collection.rejected) > MAX_REJECTIONS_SHOWN:
         print(f"  ... {len(collection.rejected) - MAX_REJECTIONS_SHOWN} more rejected")
+    if not collection.rejected:
+        return
+
+    reasons = count_rejection_reasons(collection.rejected)
+    if len(reasons) > MAX_REASONS_SHOWN:
+        print(f"  rejection reasons (top {MAX_REASONS_SHOWN} of {len(reasons)}):")
+    else:
+        print("  rejection reasons:")
+    for reason, count in reasons[:MAX_REASONS_SHOWN]:
+        print(f"    {count}  {reason}")
+    if len(reasons) > MAX_REASONS_SHOWN:
+        print(f"    ... {len(reasons) - MAX_REASONS_SHOWN} more reasons")
 
 
 def run() -> None:

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -11,7 +12,13 @@ import pytest
 
 from career_intelligence import ingest
 from career_intelligence.ingest import main
-from career_intelligence.ingestion.contracts import RawPosting, SourceFetchError, SourceMetadata
+from career_intelligence.ingestion import service
+from career_intelligence.ingestion.contracts import (
+    MappingError,
+    RawPosting,
+    SourceFetchError,
+    SourceMetadata,
+)
 from career_intelligence.ingestion.http import HttpClient
 from career_intelligence.ingestion.pagination import IncompletePaginationError
 
@@ -319,3 +326,117 @@ def test_dry_run_never_opens_a_session(records: slice, tmp_path: Path) -> None:
     path = write_postings(tmp_path, fixture_records()[records])
 
     assert main(["local-file", path], session_factory=forbidden_session_factory) == 0
+
+
+# --- Rejection summary ------------------------------------------------------------------
+
+
+class ReasonAdapter:
+    """Rejects every record at mapping, with the reason the record names."""
+
+    def __init__(self, records: list[dict[str, str]]) -> None:
+        self._records = records
+
+    @property
+    def metadata(self) -> SourceMetadata:
+        return SourceMetadata(
+            name="Reasons", url="https://reasons.example.com/", source_type="test"
+        )
+
+    def fetch_raw_postings(self) -> Iterator[RawPosting]:
+        yield from self._records
+
+    def map_posting(self, raw: RawPosting) -> dict[str, Any]:
+        raise MappingError(raw["why"])
+
+
+def use_reasons_adapter(monkeypatch: pytest.MonkeyPatch, counts: dict[str, int]) -> ReasonAdapter:
+    records = [{"why": reason} for reason, count in counts.items() for _ in range(count)]
+    adapter = ReasonAdapter(records)
+    monkeypatch.setattr(ingest, "build_adapter", lambda *_, **__: adapter)
+    return adapter
+
+
+def reason_lines(out: str) -> list[str]:
+    """Lines of the "rejection reasons" block, without the "... more reasons" line."""
+    return [
+        line for line in out.splitlines() if line.startswith("    ") and "more reasons" not in line
+    ]
+
+
+def test_cli_shows_at_most_20_individual_rejections(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rejected = fixture_records()[4]  # no company object
+    path = write_postings(tmp_path, [{**rejected, "id": f"r-{n}"} for n in range(25)])
+
+    assert main(["local-file", path], session_factory=forbidden_session_factory) == 0
+
+    out = capsys.readouterr().out
+    individual = [line for line in out.splitlines() if line.startswith("  rejected position=")]
+    assert len(individual) == ingest.MAX_REJECTIONS_SHOWN == 20
+    assert "  ... 5 more rejected" in out
+    assert "  rejection reasons:\n    25  mapping: company must be an object\n" in out
+
+
+def test_cli_shows_at_most_10_reasons_and_counts_the_rest(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_reasons_adapter(monkeypatch, {f"reason-{k:02d}": k % 3 + 1 for k in range(12)})
+
+    assert main(["local-file", "ignored.json"], session_factory=forbidden_session_factory) == 0
+
+    out = capsys.readouterr().out
+    assert "  rejection reasons (top 10 of 12):" in out
+    assert len(reason_lines(out)) == service.MAX_REASONS_SHOWN == 10
+    assert out.endswith(
+        "    ... 2 more reasons\ndry run: nothing was written (use --persist to store postings)\n"
+    )
+
+
+def test_cli_orders_reasons_by_frequency_then_alphabetically(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    use_reasons_adapter(monkeypatch, {"b-reason": 2, "a-reason": 2, "c-reason": 3, "d-reason": 1})
+
+    assert main(["local-file", "ignored.json"], session_factory=forbidden_session_factory) == 0
+
+    out = capsys.readouterr().out
+    assert "  rejection reasons:\n" in out
+    assert reason_lines(out) == [
+        "    3  mapping: c-reason",
+        "    2  mapping: a-reason",
+        "    2  mapping: b-reason",
+        "    1  mapping: d-reason",
+    ]
+
+
+def test_cli_and_service_group_rejections_with_the_same_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert ingest.count_rejection_reasons is service.count_rejection_reasons
+    assert ingest.MAX_REASONS_SHOWN is service.MAX_REASONS_SHOWN
+    caplog.set_level(logging.WARNING, logger="career_intelligence.ingestion.service")
+    adapter = use_reasons_adapter(monkeypatch, {f"reason-{k:02d}": k % 4 + 1 for k in range(12)})
+
+    assert main(["local-file", "ignored.json"], session_factory=forbidden_session_factory) == 0
+
+    expected = service.count_rejection_reasons(service.collect_postings(adapter).rejected)
+    shown = expected[: service.MAX_REASONS_SHOWN]
+    assert reason_lines(capsys.readouterr().out) == [f"    {n}  {r}" for r, n in shown]
+    summaries = [r for r in caplog.records if r.getMessage().startswith("rejections_summary")]
+    assert len(summaries) == 2  # one per collection: the CLI run, then the direct call
+    assert all(r.getMessage().endswith(f"top_reasons={dict(shown)!r}") for r in summaries)
+
+
+@pytest.mark.parametrize("records", [slice(0, 0), slice(0, 3)], ids=["empty", "all_valid"])
+def test_cli_shows_no_reasons_block_without_rejections(
+    records: slice, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_postings(tmp_path, fixture_records()[records])
+
+    assert main(["local-file", path], session_factory=forbidden_session_factory) == 0
+
+    assert "rejection reasons" not in capsys.readouterr().out

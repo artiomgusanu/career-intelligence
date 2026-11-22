@@ -5,7 +5,8 @@ Persistence lives in ``career_intelligence.ingestion.persistence``.
 """
 
 import logging
-from collections.abc import Mapping
+from collections import Counter
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -19,6 +20,9 @@ from career_intelligence.ingestion.contracts import (
 from career_intelligence.schemas import JobPostingCreate, SourceCreate
 
 logger = logging.getLogger(__name__)
+
+# Most frequent rejection reasons shown in the aggregated warning and by the CLI.
+MAX_REASONS_SHOWN = 10
 
 
 class AdapterContractError(IngestionError):
@@ -43,13 +47,17 @@ class CollectionResult:
         return len(self.postings) + len(self.rejected)
 
 
+def count_rejection_reasons(rejected: Iterable[RejectedPosting]) -> list[tuple[str, int]]:
+    """(reason, count) pairs, most frequent first, ties broken by reason. Deterministic."""
+    counts = Counter(item.reason for item in rejected)
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+
+
 def validate_metadata(metadata: SourceMetadata) -> None:
     try:
         SourceCreate(name=metadata.name, url=metadata.url, source_type=metadata.source_type)
     except ValidationError as exc:
-        raise AdapterContractError(
-            f"Invalid source metadata: {_summarize(exc)}"
-        ) from None
+        raise AdapterContractError(f"Invalid source metadata: {_summarize(exc)}") from None
 
 
 def collect_postings(adapter: SourceAdapter) -> CollectionResult:
@@ -88,13 +96,25 @@ def collect_postings(adapter: SourceAdapter) -> CollectionResult:
                 )
             )
 
+    # One line per rejection at DEBUG; a single aggregated WARNING per collection.
     for item in rejected:
-        logger.warning(
+        logger.debug(
             "posting_rejected source=%r position=%d external_id=%r reason=%r",
             metadata.name,
             item.position,
             item.external_id,
             item.reason,
+        )
+    if rejected:
+        reasons = count_rejection_reasons(rejected)
+        logger.warning(
+            "rejections_summary source=%r rejected=%d distinct_reasons=%d omitted_reasons=%d "
+            "top_reasons=%r",
+            metadata.name,
+            len(rejected),
+            len(reasons),
+            max(len(reasons) - MAX_REASONS_SHOWN, 0),
+            dict(reasons[:MAX_REASONS_SHOWN]),
         )
     logger.info(
         "collection_finished source=%r fetched=%d valid=%d rejected=%d",

@@ -1,5 +1,7 @@
 """Collection pipeline tests: contract, normalization, validation, HTTP end to end."""
 
+import itertools
+import logging
 import subprocess
 import sys
 from collections.abc import Iterable, Iterator
@@ -18,8 +20,11 @@ from career_intelligence.ingestion.contracts import (
 from career_intelligence.ingestion.http import HttpClient, HttpStatusError
 from career_intelligence.ingestion.pagination import Page, paginate
 from career_intelligence.ingestion.service import (
+    MAX_REASONS_SHOWN,
     AdapterContractError,
+    RejectedPosting,
     collect_postings,
+    count_rejection_reasons,
 )
 
 METADATA = SourceMetadata(name="Fake Board", url="https://fake.example.com/", source_type="test")
@@ -120,6 +125,131 @@ def test_mapper_cannot_introduce_fields_without_a_model_column() -> None:
     assert "work_model" in result.rejected[0].reason
 
 
+# --- Rejection logging and grouping -----------------------------------------------
+
+SERVICE_LOGGER = "career_intelligence.ingestion.service"
+
+
+def rejections(*reasons: str) -> list[RejectedPosting]:
+    return [RejectedPosting(i, None, reason) for i, reason in enumerate(reasons)]
+
+
+class ReasonAdapter(ListAdapter):
+    """Rejects every record at mapping, with the reason the record names."""
+
+    def map_posting(self, record: RawPosting) -> dict[str, Any]:
+        raise MappingError(record["why"])
+
+
+def records_with_reasons(counts: dict[str, int]) -> list[dict[str, str]]:
+    return [{"why": reason} for reason, count in counts.items() for _ in range(count)]
+
+
+def log_records(caplog: pytest.LogCaptureFixture, message: str) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.getMessage().startswith(message)]
+
+
+def test_count_rejection_reasons_counts_each_reason() -> None:
+    reasons = rejections("a", "c", "a", "b", "c", "a")
+
+    assert count_rejection_reasons(reasons) == [("a", 3), ("c", 2), ("b", 1)]
+
+
+def test_count_rejection_reasons_breaks_ties_alphabetically() -> None:
+    assert count_rejection_reasons(rejections("z", "m", "a", "z", "a", "m")) == [
+        ("a", 2),
+        ("m", 2),
+        ("z", 2),
+    ]
+
+
+def test_count_rejection_reasons_is_independent_of_input_order() -> None:
+    reasons = rejections("b", "a", "c", "a", "d", "c")
+    expected = [("a", 2), ("c", 2), ("b", 1), ("d", 1)]
+
+    for permutation in itertools.permutations(reasons):
+        assert count_rejection_reasons(permutation) == expected
+
+
+def test_count_rejection_reasons_of_nothing_is_empty() -> None:
+    assert count_rejection_reasons([]) == []
+
+
+def test_each_rejection_is_logged_at_debug_not_warning(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG, logger=SERVICE_LOGGER)
+
+    collect_postings(ListAdapter([raw("ok"), "not-a-dict", {"headline": "no ref"}]))
+
+    individual = log_records(caplog, "posting_rejected")
+    assert len(individual) == 2
+    assert {r.levelno for r in individual} == {logging.DEBUG}
+
+
+def test_a_collection_with_rejections_logs_exactly_one_aggregated_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=SERVICE_LOGGER)
+    records = [raw("ok"), "not-a-dict", {"headline": "no ref"}, "also-not-a-dict"]
+
+    collect_postings(ListAdapter(records))
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert warnings[0].getMessage() == (
+        "rejections_summary source='Fake Board' rejected=3 distinct_reasons=2 "
+        "omitted_reasons=0 top_reasons={'raw posting is not an object': 2, "
+        "'mapping: missing ref': 1}"
+    )
+
+
+def test_aggregated_warning_shows_at_most_the_most_frequent_reasons(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=SERVICE_LOGGER)
+    counts = {f"reason-{k:02d}": k % 3 + 1 for k in range(MAX_REASONS_SHOWN + 2)}
+
+    result = collect_postings(ReasonAdapter(records_with_reasons(counts)))
+
+    (warning,) = log_records(caplog, "rejections_summary")
+    expected = count_rejection_reasons(result.rejected)
+    message = warning.getMessage()
+    assert f"rejected={sum(counts.values())} distinct_reasons={len(counts)} " in message
+    assert "omitted_reasons=2 " in message
+    assert message.endswith(f"top_reasons={dict(expected[:MAX_REASONS_SHOWN])!r}")
+    assert all(reason not in message for reason, _ in expected[MAX_REASONS_SHOWN:])
+
+
+@pytest.mark.parametrize("records", [[], [raw("1"), raw("2")]], ids=["empty", "all_valid"])
+def test_collections_without_rejections_log_no_rejection_warning(
+    records: list[Any], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=SERVICE_LOGGER)
+
+    collect_postings(ListAdapter(records))
+
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
+    assert log_records(caplog, "posting_rejected") == []
+    assert log_records(caplog, "rejections_summary") == []
+
+
+def test_rejection_logs_never_contain_record_values(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    sentinel = "PRIVATE-SENTINEL"
+    records = [
+        raw("long-title", headline="x" * 301 + sentinel, employer=sentinel),
+        raw("blank-title", headline="   ", employer=sentinel),
+        {"headline": sentinel, "employer": sentinel},  # mapping failure
+        [sentinel],  # not an object
+    ]
+
+    result = collect_postings(ListAdapter(records))
+
+    assert len(result.rejected) == 4
+    assert log_records(caplog, "posting_rejected")
+    assert log_records(caplog, "rejections_summary")
+    assert sentinel not in caplog.text
+
+
 # --- Contract -------------------------------------------------------------------
 
 
@@ -184,9 +314,7 @@ class PagedHttpAdapter:
         return METADATA
 
     def _fetch_page(self, page_number: int) -> Page[RawPosting]:
-        payload = self._client.get_json(
-            "/jobs", {"page": page_number, "limit": self._page_size}
-        )
+        payload = self._client.get_json("/jobs", {"page": page_number, "limit": self._page_size})
         return Page(
             items=payload["results"],
             has_next=page_number * self._page_size < payload["total"],
