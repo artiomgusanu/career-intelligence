@@ -18,8 +18,16 @@ request. The HTTP client is created with ``ITJOBS_BASE_URL`` and
 ``ITJOBS_MIN_INTERVAL_SECONDS`` and is closed once the collection ends,
 whatever its outcome, before the database is touched.
 
-Exit codes: 0 success, 1 ingestion failure, 2 invalid arguments, refused
-demo persistence or invalid configuration.
+With ``--persist``, the database is contacted only if the collection holds at
+least one valid posting; rejected postings are never written. A collection
+with no postings is not an error (exit 0, "nothing to persist"). A collection
+whose postings were all rejected fails (exit 1) without touching the database,
+so no source is registered without postings. Dry runs report both cases and
+exit 0.
+
+Exit codes: 0 success (including "nothing to persist"), 1 ingestion failure
+or persistence refused because every posting was rejected, 2 invalid
+arguments, refused demo persistence or invalid configuration.
 """
 
 import argparse
@@ -168,6 +176,17 @@ def main(
     if not args.persist:
         print("dry run: nothing was written (use --persist to store postings)")
         return 0
+
+    # Checked before any session is opened: no connection, no source row.
+    if collection.fetched == 0:
+        print("nothing to persist: the source returned no postings")
+        return 0
+    if not collection.postings:
+        print(
+            f"error: refusing to persist: all {collection.fetched} fetched postings were rejected",
+            file=sys.stderr,
+        )
+        return 1
 
     # Imported only when persisting, so dry runs never load the database layer.
     from career_intelligence.ingestion.persistence import persist_collection

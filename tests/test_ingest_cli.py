@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -206,3 +207,115 @@ def test_invalid_arguments_exit_with_usage_error() -> None:
         main([])
 
     assert exc_info.value.code == 2
+
+
+# --- Persistence rule: no valid postings, no database ---------------------------------------
+# Collections are built from records of the existing fixture: its first three
+# records are valid and distinct, the last four are rejected.
+
+
+def fixture_records() -> list[Any]:
+    return json.loads(FIXTURE.read_text(encoding="utf-8"))["postings"]
+
+
+def write_postings(tmp_path: Path, records: list[Any]) -> str:
+    path = tmp_path / "postings.json"
+    path.write_text(json.dumps({"postings": records}), encoding="utf-8")
+    return str(path)
+
+
+PERSIST = ["--persist", "--allow-demo-data"]
+
+
+def test_empty_collection_dry_run_exits_0(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_postings(tmp_path, [])
+
+    exit_code = main(["local-file", path], session_factory=forbidden_session_factory)
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "mode=dry-run fetched=0 valid=0 rejected=0" in out
+    assert "dry run: nothing was written" in out
+
+
+def test_empty_collection_with_persist_exits_0_without_touching_the_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_postings(tmp_path, [])
+
+    exit_code = main([*PERSIST, "local-file", path], session_factory=forbidden_session_factory)
+
+    captured = capsys.readouterr()
+    assert exit_code == 0
+    assert "mode=persist fetched=0 valid=0 rejected=0" in captured.out
+    assert "nothing to persist: the source returned no postings" in captured.out
+    assert "persisting to" not in captured.out
+    assert captured.err == ""
+
+
+def test_all_rejected_dry_run_exits_0_and_reports_rejections(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_postings(tmp_path, fixture_records()[4:])
+
+    exit_code = main(["local-file", path], session_factory=forbidden_session_factory)
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "mode=dry-run fetched=4 valid=0 rejected=4" in out
+    assert "external_id='naive-date'" in out
+    assert "dry run: nothing was written" in out
+
+
+def test_all_rejected_with_persist_exits_1_without_touching_the_database(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = write_postings(tmp_path, fixture_records()[4:])
+
+    exit_code = main([*PERSIST, "local-file", path], session_factory=forbidden_session_factory)
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "mode=persist fetched=4 valid=0 rejected=4" in captured.out  # results still shown
+    assert "external_id='naive-date'" in captured.out
+    assert captured.err == "error: refusing to persist: all 4 fetched postings were rejected\n"
+    assert "persisting to" not in captured.out
+
+
+@pytest.mark.parametrize(
+    ("records", "valid", "rejected"),
+    [(slice(0, 3), 3, 0), (slice(0, 8), 4, 4)],
+    ids=["all_valid", "partial"],
+)
+def test_collections_with_valid_postings_open_a_session_when_persisting(
+    records: slice,
+    valid: int,
+    rejected: int,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = write_postings(tmp_path, fixture_records()[records])
+    opened: list[bool] = []
+
+    def recording_session_factory():
+        opened.append(True)
+        raise RuntimeError("stop before touching any database")
+
+    with pytest.raises(RuntimeError, match="stop before"):
+        main([*PERSIST, "local-file", path], session_factory=recording_session_factory)
+
+    assert opened == [True]
+    assert f"mode=persist fetched={valid + rejected} valid={valid} rejected={rejected}" in (
+        capsys.readouterr().out
+    )
+
+
+@pytest.mark.parametrize(
+    "records", [slice(0, 0), slice(4, 8), slice(0, 3)], ids=["empty", "all_rejected", "valid"]
+)
+def test_dry_run_never_opens_a_session(records: slice, tmp_path: Path) -> None:
+    path = write_postings(tmp_path, fixture_records()[records])
+
+    assert main(["local-file", path], session_factory=forbidden_session_factory) == 0

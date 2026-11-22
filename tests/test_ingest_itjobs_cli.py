@@ -506,3 +506,42 @@ def test_main_uses_the_default_factory_when_none_is_given(
     assert time.sleeps == [ITJOBS_MIN_INTERVAL_SECONDS]
     assert [client.close_calls for client in created] == [1]
     assert "source='ITJobs.pt' mode=dry-run" in capsys.readouterr().out
+
+
+# --- Persistence rule -------------------------------------------------------------------------------
+
+
+def test_persist_with_every_posting_rejected_exits_1_without_touching_the_database(
+    capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    api = FakeListApi([record(n) for n in range(1, DEFAULT_PAGE_SIZE + 3)])  # 2 pages
+    factory = ClientFactory(api)
+
+    exit_code = run(factory, "--persist")
+
+    out, err = assert_key_not_exposed(capsys, caplog)
+    total = DEFAULT_PAGE_SIZE + 2
+    assert exit_code == 1
+    assert api.pages == [1, 2]
+    assert f"mode=persist fetched={total} valid=0 rejected={total}" in out
+    assert "validation: job_url: Field required" in out
+    assert err == f"error: refusing to persist: all {total} fetched postings were rejected\n"
+    assert "persisting to" not in out
+    assert [client.close_calls for client in factory.clients] == [1]
+
+
+def test_persist_with_an_empty_listing_exits_0_without_touching_the_database(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    api = FakeListApi([])
+    factory = ClientFactory(api)
+
+    exit_code = run(factory, "--persist")
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert api.pages == [1]
+    assert "mode=persist fetched=0 valid=0 rejected=0" in out
+    assert "nothing to persist: the source returned no postings" in out
+    assert [client.close_calls for client in factory.clients] == [1]
