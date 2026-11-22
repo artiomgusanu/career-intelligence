@@ -127,7 +127,9 @@ class ScriptedAdapter:
 
     @property
     def metadata(self) -> SourceMetadata:
-        return SourceMetadata(name="Scripted", url="https://scripted.example.com/", source_type="test")
+        return SourceMetadata(
+            name="Scripted", url="https://scripted.example.com/", source_type="test"
+        )
 
     def fetch_raw_postings(self) -> Iterator[RawPosting]:
         raise self._error
@@ -164,7 +166,7 @@ def test_every_ingestion_error_is_reported_with_exit_code_1(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     error = error_factory()
-    monkeypatch.setattr(ingest, "build_adapter", lambda args: ScriptedAdapter(error))
+    monkeypatch.setattr(ingest, "build_adapter", lambda *_, **__: ScriptedAdapter(error))
 
     exit_code = main(["local-file", "ignored.json"], session_factory=forbidden_session_factory)
 
@@ -181,7 +183,7 @@ def test_invalid_adapter_metadata_is_reported_with_exit_code_1(
             return SourceMetadata(name="", url="not a url", source_type="test")
 
     monkeypatch.setattr(
-        ingest, "build_adapter", lambda args: BadMetadataAdapter(RuntimeError("unused"))
+        ingest, "build_adapter", lambda *_, **__: BadMetadataAdapter(RuntimeError("unused"))
     )
 
     exit_code = main(["local-file", "ignored.json"], session_factory=forbidden_session_factory)
