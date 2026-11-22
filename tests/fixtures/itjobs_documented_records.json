@@ -1,0 +1,48 @@
+{
+  "_provenance": {
+    "synthetic": true,
+    "derived_from": "Record structure of the job/get example in the public ITJobs API documentation (/api/docs/job), read on 2026-11-21.",
+    "note": "All values are invented. This is not an API response and contains no real company, posting or contact data. No URL appears in this file.",
+    "unverified": [
+      "whether job/list returns the full company object",
+      "timezone of publishedAt",
+      "salary currency and period",
+      "semantics of locations"
+    ]
+  },
+  "records": [
+    {
+      "id": 900001,
+      "companyId": 70001,
+      "company": {
+        "id": 70001,
+        "name": "Example Tech",
+        "slug": "example-tech",
+        "description": "Synthetic company description.",
+        "email": "contact@example.invalid",
+        "phone": "000000000",
+        "fax": "000000001",
+        "address": "Synthetic Street 0, Nowhere"
+      },
+      "title": "Backend Engineer (Python)",
+      "body": "<p>Build <strong>APIs</strong> with FastAPI.</p>\n<ul><li>PostgreSQL</li></ul>",
+      "ref": "SYN-REF-0001",
+      "slug": "backend-engineer-python",
+      "salaryMin": 11000,
+      "salaryMax": 17000,
+      "wage": "synthetic",
+      "types": [{"id": 1, "name": "Full-time"}],
+      "contracts": [{"id": 1, "name": "Synthetic contract"}],
+      "workModel": 2,
+      "locations": [{"id": 1, "name": "Synthetic City A"}, {"id": 2, "name": "Synthetic City B"}],
+      "country": "Synthetic Country",
+      "publishedAt": "2026-11-20 09:00:00",
+      "updatedAt": "2026-11-21 10:30:00"
+    },
+    {
+      "id": 900002,
+      "company": {"name": "Sample Data"},
+      "title": "Data Engineer"
+    }
+  ]
+}
